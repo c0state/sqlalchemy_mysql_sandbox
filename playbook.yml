@@ -1,0 +1,51 @@
+---
+- hosts: all
+  vars_files:
+    - vars/mysql.yml
+  become: true
+  pre_tasks:
+  - name: download mysql deb file
+    get_url: url=https://dev.mysql.com/get/mysql-apt-config_0.7.2-1_all.deb dest=/tmp/mysql-apt-config_0.7.2-1_all.deb mode=0644
+  - name: configure sql version 5.7
+    debconf: name=mysql-apt-config question='mysql-apt-config/select-server' value=mysql-5.7 vtype='select'
+  - name: Install mysql deb file
+    apt: deb=/tmp/mysql-apt-config_0.7.2-1_all.deb
+
+  - name: set root password
+    debconf: name='mysql-community-server' question='mysql-community-server/root-pass' value='"{{ mysql_root_password }}"' vtype='password'
+  - name: Confirm MySQL root password before installing
+    debconf: name='mysql-community-server' question='mysql-community-server/re-root-pass' value='"{{ mysql_root_password }}"' vtype='password'
+
+  - name: Install MySQL
+    apt: package={{ item }} state=installed update_cache=yes
+    with_items:
+      - mysql-server
+      - mysql-client
+      - python-mysqldb
+
+  - name: Add sandbox database
+    mysql_db: db=sqlalchemy_sandbox state=present login_user="root" login_password="{{ mysql_root_password }}"
+
+  - name: Secures the MySQL root user
+    mysql_user: user="root" password="{{ mysql_root_password }}" host="{{ item }}" login_user=root login_password="{{ mysql_root_password }}"
+    with_items:
+        - 127.0.0.1
+        - localhost
+        - ::1
+
+  - name: remove anonymous user
+    mysql_user: name='' state=absent login_user="root" login_password="{{ mysql_root_password }}"
+
+  - name: add app user account
+    mysql_user: name=user password="user" priv=*.*:ALL state=present login_user="root" login_password="{{ mysql_root_password }}"
+#  roles:
+#    - { role: geerlingguy.mysql }
+
+  tasks:
+  - name: Install pip
+    apt: package={{ item }} state=installed update_cache=yes
+    with_items:
+      - python-pip
+
+  - name: Install pip requirements
+    pip: requirements=/vagrant/requirements.txt
