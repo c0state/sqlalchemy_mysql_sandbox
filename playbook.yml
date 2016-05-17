@@ -4,17 +4,19 @@
     - vars/mysql.yml
   become: true
   pre_tasks:
-  - name: download mysql deb file
+  # download mysql apt configuration deb package, set desired version to 5.7 and install
+  - name: Download mysql deb apt config file
     get_url: url=https://dev.mysql.com/get/mysql-apt-config_0.7.2-1_all.deb dest=/tmp/mysql-apt-config_0.7.2-1_all.deb mode=0644
-  - name: configure sql version 5.7
+  - name: Configure mysql version 5.7
     debconf: name=mysql-apt-config question='mysql-apt-config/select-server' value=mysql-5.7 vtype='select'
-  - name: Install mysql deb file
+  - name: Install mysql deb apt config file
     apt: deb=/tmp/mysql-apt-config_0.7.2-1_all.deb
 
-  - name: set root password
-    debconf: name='mysql-community-server' question='mysql-community-server/root-pass' value='"{{ mysql_root_password }}"' vtype='password'
-  - name: Confirm MySQL root password before installing
-    debconf: name='mysql-community-server' question='mysql-community-server/re-root-pass' value='"{{ mysql_root_password }}"' vtype='password'
+  # set root password via debconf-set-selections to automate gui selections
+  - name: Set mysql root password via debconf
+    debconf: name='mysql-community-server' question='mysql-community-server/root-pass' value="{{ mysql_root_password | string }}" vtype='password'
+  - name: Confirm mysql root password via debconf
+    debconf: name='mysql-community-server' question='mysql-community-server/re-root-pass' value="{{ mysql_root_password | string }}" vtype='password'
 
   - name: Install MySQL
     apt: package={{ item }} state=installed update_cache=yes
@@ -23,24 +25,29 @@
       - mysql-client
       - python-mysqldb
 
-  - name: Add sandbox database
-    mysql_db: db=sqlalchemy_sandbox state=present login_user="root" login_password="{{ mysql_root_password }}"
-
   - name: Secures the MySQL root user
-    mysql_user: user="root" password="{{ mysql_root_password }}" host="{{ item }}" login_user=root login_password="{{ mysql_root_password }}"
-    with_items:
-        - 127.0.0.1
-        - localhost
-        - ::1
+    mysql_user: user="root" password="{{ mysql_root_password | string }}" host="%" login_user=root login_password="{{ mysql_root_password | string }}"
+  - name: Remove anonymous user
+    mysql_user: name='' state=absent login_user="root" login_password="{{ mysql_root_password | string }}"
 
-  - name: remove anonymous user
-    mysql_user: name='' state=absent login_user="root" login_password="{{ mysql_root_password }}"
+  - name: Add user accounts
+    mysql_user: name="{{ item.name }}" password="{{ item.password }}" priv="{{ item.priv }}" host="{{ item.host }}" state=present login_user="root" login_password="{{ mysql_root_password | string }}"
+    with_items: "{{ mysql_users }}"
 
-  - name: add app user account
-    mysql_user: name=user password="user" priv=*.*:ALL state=present login_user="root" login_password="{{ mysql_root_password }}"
+  - name: Add databases
+    mysql_db: db="{{ item.name }}" encoding="{{ item.encoding }}" collation="{{ item.collation }}" state=present login_user="root" login_password="{{ mysql_root_password | string }}"
+    with_items: "{{ mysql_databases }}"
+
+  - name: Ensure MySQL will listen on all IP interfaces
+    lineinfile: dest=/etc/mysql/my.cnf
+      regexp='bind-address\s*=\s*127\.0\.0\.1\s*'
+      line='bind-address = 0.0.0.0'
+      state=present
+
+  - name: Restart mysql service
+    service: name=mysql state=restarted
 #  roles:
 #    - { role: geerlingguy.mysql }
-
   tasks:
   - name: Install pip
     apt: package={{ item }} state=installed update_cache=yes
